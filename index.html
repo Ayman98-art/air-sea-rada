@@ -14,6 +14,7 @@
   .bar button.active { background: #f5b301; color: #111; border-color: #f5b301; font-weight: 600; }
   .bar input { flex: 1; min-width: 120px; }
   .status { font-size: 12px; opacity: .8; margin-inline-start: auto; }
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
   .plane { transition: transform .3s linear; }
   .plane svg { filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
   .leaflet-popup-content { direction: rtl; font-family: inherit; line-height: 1.7; }
@@ -36,8 +37,8 @@ const REFRESH_MS = 10000;
 
 const map = L.map("map", { zoomControl: false }).setView([26, 40], 5);
 L.control.zoom({ position: "bottomleft" }).addTo(map);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 18
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "&copy; OpenStreetMap contributors", maxZoom: 18
 }).addTo(map);
 
 let mode = "all";           // "all" | "mil"
@@ -107,7 +108,7 @@ async function refresh() {
     }
     statusEl.textContent = `${seen.size} طائرة · ${new Date().toLocaleTimeString("ar-EG")}`;
   } catch (e) {
-    statusEl.textContent = "تعذر تحميل البيانات، سنحاول مجددًا…";
+    statusEl.textContent = "تعذر تحميل البيانات (" + (e && e.message ? e.message : e) + ")";
   }
 }
 
