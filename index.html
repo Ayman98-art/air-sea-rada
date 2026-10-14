@@ -301,10 +301,15 @@
 
   function endpoint() {
     if (mode === "mil") return API + "mil";
+    // Snap the query to a shared grid so visitors looking at nearby areas send
+    // identical URLs and get served from the cache instead of a new upstream call.
     const c = map.getCenter();
-    const meters = c.distanceTo(map.getBounds().getNorthEast());
-    const nm = Math.max(10, Math.min(250, Math.round(meters / 1852)));
-    return API + encodeURIComponent("point/" + c.lat.toFixed(3) + "/" + c.lng.toFixed(3) + "/" + nm);
+    const need = c.distanceTo(map.getBounds().getNorthEast()) / 1852 * 1.3;
+    const nm = [25, 50, 100, 150, 250].find(r => r >= need) || 250;
+    const step = nm / 120; // grid cell (degrees) ≈ quarter of radius, keeps the view covered
+    const lat = Math.max(-85, Math.min(85, Math.round(c.lat / step) * step));
+    const lng = ((Math.round(c.lng / step) * step + 540) % 360) - 180;
+    return API + encodeURIComponent("point/" + lat.toFixed(2) + "/" + lng.toFixed(2) + "/" + nm);
   }
 
   /* ---------- UI state ---------- */
