@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>رادار الطيران</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; background: #0b1220; color: #e6edf7; }
+  #map { position: absolute; inset: 0; direction: ltr; }
+  .bar { position: absolute; z-index: 1000; top: 10px; right: 10px; left: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+         background: rgba(11,18,32,.92); border: 1px solid #22304a; border-radius: 12px; padding: 8px 10px; }
+  .bar button, .bar input { font: inherit; border-radius: 8px; border: 1px solid #2c3e5f; background: #14203a; color: #e6edf7; padding: 7px 12px; }
+  .bar button.active { background: #f5b301; color: #111; border-color: #f5b301; font-weight: 600; }
+  .bar input { flex: 1; min-width: 120px; }
+  .status { font-size: 12px; opacity: .8; margin-inline-start: auto; }
+  .plane { transition: transform .3s linear; }
+  .plane svg { filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
+  .leaflet-popup-content { direction: rtl; font-family: inherit; line-height: 1.7; }
+  .leaflet-popup-content b { font-size: 15px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="bar">
+  <button id="btnAll" class="active">كل الطائرات</button>
+  <button id="btnMil">العسكرية فقط</button>
+  <input id="search" placeholder="ابحث برمز الرحلة أو التسجيل">
+  <span class="status" id="status">جاري التحميل…</span>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const API = "https://api.adsb.lol/v2";
+const REFRESH_MS = 10000;
+
+const map = L.map("map", { zoomControl: false }).setView([26, 40], 5);
+L.control.zoom({ position: "bottomleft" }).addTo(map);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 18
+}).addTo(map);
+
+let mode = "all";           // "all" | "mil"
+let query = "";
+const markers = new Map();  // hex -> marker
+const statusEl = document.getElementById("status");
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const isMil = a => (a.dbFlags & 1) === 1;
+
+function icon(a) {
+  const color = isMil(a) ? "#ff4d4d" : "#4dc3ff";
+  const rot = Number.isFinite(a.track) ? a.track : 0;
+  return L.divIcon({
+    className: "plane",
+    iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<svg width="26" height="26" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)">
+             <path fill="${color}" d="M12 2l2 7 8 4v2l-8-2-1 5 3 2v1l-4-1-4 1v-1l3-2-1-5-8 2v-2l8-4z"/></svg>`
+  });
+}
+
+function popup(a) {
+  const alt = a.alt_baro === "ground" ? "على الأرض" : (a.alt_baro != null ? Math.round(a.alt_baro * 0.3048).toLocaleString("en") + " م" : "—");
+  const spd = a.gs != null ? Math.round(a.gs * 1.852) + " كم/س" : "—";
+  return `<b>${esc((a.flight || "").trim() || a.hex)}</b>${isMil(a) ? " 🔴 عسكرية" : ""}<br>
+          النوع: ${esc(a.t || "—")}<br>
+          التسجيل: ${esc(a.r || "—")}<br>
+          الارتفاع: ${alt}<br>
+          السرعة: ${spd}<br>
+          الاتجاه: ${a.track != null ? Math.round(a.track) + "°" : "—"}<br>
+          ICAO: ${esc(a.hex)}`;
+}
+
+function endpoint() {
+  if (mode === "mil") return `${API}/mil`;
+  const c = map.getCenter();
+  const meters = c.distanceTo(map.getBounds().getNorthEast());
+  const nm = Math.max(10, Math.min(250, Math.round(meters / 1852)));
+  return `${API}/point/${c.lat.toFixed(3)}/${c.lng.toFixed(3)}/${nm}`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(endpoint());
+    if (!res.ok) throw new
