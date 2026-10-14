@@ -7,8 +7,7 @@
 <title>رادار الجو والبحر</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root {
     --bg: #0a1020;
@@ -154,6 +153,251 @@
     <span class="chip"><b id="chTotal">0</b> طائرة معروضة</span>
     <span class="chip mil"><b id="chMil">0</b> عسكرية</span>
   </div>
+
+  <div id="note" class="note" role="status"><span id="noteText"></span><button id="noteBtn" type="button">إعادة المحاولة</button></div>
+  <div class="progress"><i id="bar"></i></div>
+</header>
+
+<div class="fab" id="fab">
+  <button id="bLoc" aria-label="موقعي">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e8eefb" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+  </button>
+  <button id="bIn" aria-label="تكبير">+</button>
+  <button id="bOut" aria-label="تصغير">−</button>
+</div>
+
+<section id="sheet" class="sheet" aria-live="polite">
+  <div class="grab"></div>
+  <div class="sheet-head">
+    <div style="min-width:0">
+      <div id="shCall" class="call" dir="ltr">—</div>
+      <div id="shSub" class="sub">—</div>
+    </div>
+    <button id="shClose" class="icon-btn" aria-label="إغلاق">✕</button>
+  </div>
+  <div id="shBadges" class="badges"></div>
+  <div class="grid">
+    <div class="stat"><span>الارتفاع</span><b id="stAlt">—</b></div>
+    <div class="stat"><span>السرعة</span><b id="stSpd">—</b></div>
+    <div class="stat"><span>الاتجاه</span><b id="stHdg">—</b></div>
+    <div class="stat"><span>الصعود / الهبوط</span><b id="stVr">—</b></div>
+    <div class="stat"><span>رمز Squawk</span><b id="stSq">—</b></div>
+    <div class="stat"><span>التسجيل</span><b id="stReg">—</b></div>
+  </div>
+  <div class="actions">
+    <button id="btnFollow" class="btn" type="button">تتبّع الطائرة</button>
+    <button id="btnCenter" class="btn ghost" type="button">توسيط على الخريطة</button>
+  </div>
+</section>
+
+<script>
+(function () {
+  var JS = [
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js",
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  ];
+  var CSS = [
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css",
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css",
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  ];
+  function say(t, bad) {
+    var s = document.getElementById("status"); if (s) s.textContent = t;
+    var d = document.getElementById("liveDot"); if (d && bad) d.className = "dot error";
+  }
+  window.addEventListener("error", function (e) { if (e && e.message) say("خطأ: " + e.message, true); });
+
+  function tryLoad(kind, urls, cb) {
+    var i = 0;
+    (function next() {
+      if (i >= urls.length) { cb(false); return; }
+      var url = urls[i++], done = false, el, t;
+      function fin(ok) {
+        if (done) return;
+        done = true; clearTimeout(t);
+        if (!ok && el && el.parentNode) el.parentNode.removeChild(el);
+        if (ok) cb(true); else next();
+      }
+      t = setTimeout(function () { fin(false); }, 7000);
+      el = document.createElement(kind === "js" ? "script" : "link");
+      if (kind === "js") { el.src = url; } else { el.rel = "stylesheet"; el.href = url; }
+      el.onload = function () { fin(true); };
+      el.onerror = function () { fin(false); };
+      document.head.appendChild(el);
+    })();
+  }
+
+  var jsOk = null, cssOk = null;
+  function go() {
+    if (jsOk === null || cssOk === null) return;
+    if (!jsOk) { say("تعذر تحميل مكتبة الخريطة، تحقق من الإنترنت", true); return; }
+    try { start(); } catch (e) { say("خطأ: " + (e && e.message ? e.message : e), true); }
+  }
+  tryLoad("css", CSS, function (ok) { cssOk = ok; go(); });
+  tryLoad("js", JS, function (ok) { jsOk = ok; go(); });
+
+  function start() {
+  "use strict";
+  const API = "/api/adsb?p=";
+  const REFRESH_MS = 10000;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = n => Math.round(n).toLocaleString("en");
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  if (typeof L === "undefined") {
+    $("status").textContent = "تعذر تحميل مكتبة الخريطة";
+    $("liveDot").className = "dot error";
+    return;
+  }
+
+  /* ---------- Map ---------- */
+  const saved = store.get("view", null);
+  const map = L.map("map", { zoomControl: false, worldCopyJump: true, minZoom: 3 })
+    .setView(saved ? [saved.lat, saved.lng] : [30, 35], saved ? saved.z : 5);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors", maxZoom: 18
+  }).addTo(map);
+  map.attributionControl.setPrefix(false);
+  map.attributionControl.setPosition("bottomleft");
+
+  /* ---------- State ---------- */
+  let mode = store.get("mode", "mil");       // "all" | "mil"
+  let query = "";
+  let lastList = [];
+  let selectedHex = null;
+  let follow = false;
+  let inflight = null;
+  let moveTimer = null;
+  let hasLoaded = false;
+  const markers = new Map();   // hex -> { m, a, key }
+  const trails = new Map();    // hex -> [[lat, lon], ...]
+  const trailLine = L.polyline([], { color: "#f5b301", weight: 2.5, opacity: .85, dashArray: "4 6" }).addTo(map);
+
+  /* ---------- Helpers ---------- */
+  const isMil = a => (a.dbFlags & 1) === 1;
+  const isEmerg = a => ["7500", "7600", "7700"].includes(String(a.squawk || "")) || (a.emergency && a.emergency !== "none");
+  const callsign = a => (a.flight || "").trim() || a.r || a.hex;
+  const sizeForZoom = z => z < 5 ? 20 : z < 7 ? 24 : z < 10 ? 28 : 34;
+  const DIRS = ["شمال", "شمال شرق", "شرق", "جنوب شرق", "جنوب", "جنوب غرب", "غرب", "شمال غرب"];
+
+  function iconFor(a, selected) {
+    const s = sizeForZoom(map.getZoom());
+    const color = isEmerg(a) ? "#ffd23f" : isMil(a) ? "#ff5a5a" : "#52c7ff";
+    const rot = Number.isFinite(a.track) ? Math.round(a.track) : 0;
+    const cls = "plane" + (selected ? " sel" : "") + (isEmerg(a) ? " emerg" : "");
+    const key = [color, rot, selected ? 1 : 0, s].join("|");
+    const icon = L.divIcon({
+      className: cls, iconSize: [s, s], iconAnchor: [s / 2, s / 2],
+      html: '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" style="transform:rotate(' + rot + 'deg)">' +
+            '<path fill="' + color + '" stroke="rgba(0,0,0,.55)" stroke-width=".8" d="M12 2l2 7 8 4v2l-8-2-1 5 3 2v1l-4-1-4 1v-1l3-2-1-5-8 2v-2l8-4z"/></svg>'
+    });
+    return { icon, key };
+  }
+
+  function endpoint() {
+    if (mode === "mil") return API + "mil";
+    const c = map.getCenter();
+    const meters = c.distanceTo(map.getBounds().getNorthEast());
+    const nm = Math.max(10, Math.min(250, Math.round(meters / 1852)));
+    return API + encodeURIComponent("point/" + c.lat.toFixed(3) + "/" + c.lng.toFixed(3) + "/" + nm);
+  }
+
+  /* ---------- UI state ---------- */
+  function setDot(state) { $("liveDot").className = "dot " + state; }
+  function setNote(text, kind, retry) {
+    const n = $("note");
+    if (!text) { n.className = "note"; return; }
+    n.className = "note show" + (kind === "info" ? " info" : "");
+    $("noteText").textContent = text;
+    $("noteBtn").style.display = retry ? "" : "none";
+  }
+  function restartBar() {
+    const bar = $("bar");
+    bar.classList.remove("run");
+    void bar.offsetWidth;
+    bar.classList.add("run");
+  }
+  function setModeUI() {
+    $("btnAll").classList.toggle("active", mode === "all");
+    $("btnMil").classList.toggle("active", mode === "mil");
+    $("btnAll").setAttribute("aria-selected", mode === "all");
+    $("btnMil").setAttribute("aria-selected", mode === "mil");
+  }
+
+  /* ---------- Render ---------- */
+  function matches(a, q) {
+    return (a.flight || "").toLowerCase().includes(q) || (a.r || "").toLowerCase().includes(q) ||
+           (a.t || "").toLowerCase().includes(q) || (a.hex || "").includes(q);
+  }
+
+  function render() {
+    const q = query.trim().toLowerCase();
+    const seen = new Set();
+    let mil = 0;
+
+    for (const a of lastList) {
+      if (q && !matches(a, q)) continue;
+      seen.add(a.hex);
+      if (isMil(a)) mil++;
+
+      const t = trails.get(a.hex) || [];
+      const last = t[t.length - 1];
+      if (!last || last[0] !== a.lat || last[1] !== a.lon) { t.push([a.lat, a.lon]); if (t.length > 40) t.shift(); }
+      trails.set(a.hex, t);
+
+      const sel = a.hex === selectedHex;
+      const ic = iconFor(a, sel);
+      let rec = markers.get(a.hex);
+      if (!rec) {
+        const m = L.marker([a.lat, a.lon], { icon: ic.icon, keyboard: false });
+        m.on("click", () => select(a.hex));
+        m.addTo(map);
+        rec = { m, a, key: ic.key };
+        markers.set(a.hex, rec);
+      } else {
+        rec.m.setLatLng([a.lat, a.lon]);
+        if (rec.key !== ic.key) { rec.m.setIcon(ic.icon); rec.key = ic.key; }
+        rec.a = a;
+      }
+    }
+    for (const [hex, rec] of markers) {
+      if (!seen.has(hex)) { map.removeLayer(rec.m); markers.delete(hex); }
+    }
+    if (trails.size > 1500) {
+      for (const hex of trails.keys()) if (!seen.has(hex) && hex !== selectedHex) trails.delete(hex);
+    }
+
+    $("chTotal").textContent = fmt(seen.size);
+    $("chMil").textContent = fmt(mil);
+
+    if (hasLoaded) {
+      if (seen.size === 0 && q) setNote("لا توجد نتائج مطابقة للبحث.", "info", false);
+      else if (seen.size === 0) setNote(mode === "all" ? "لا توجد طائرات في هذه المنطقة الآن، حرّك الخريطة أو كبّرها." : "لا توجد طائرات عسكرية معروضة الآن.", "info", false);
+      else setNote("");
+    }
+    updateSheet();
+  }
+
+  /* ---------- Data ---------- */
+  async function refresh() {
+    if (inflight) inflight.abort();
+    const ctrl = new AbortController();
+    inflight = ctrl;
+    setDot("loading");
+    try {
+      const res = await fetch(endpoint(), { signal: ctrl.signal });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      lastList = (data.ac || []).filter(a => a.lat != null && a.lon != null && a.hex);
+      hasLoaded = true;
+      render();
+      setDot("ok");
+      $("status").textContent = "آخر تحديث " + new Date().  </div>
 
   <div id="note" class="note" role="status"><span id="noteText"></span><button id="noteBtn" type="button">إعادة المحاولة</button></div>
   <div class="progress"><i id="bar"></i></div>
