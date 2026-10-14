@@ -32,7 +32,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
-const API = "https://api.adsb.lol/v2";
+const API = "/api/adsb?p=";
 const REFRESH_MS = 10000;
 
 const map = L.map("map", { zoomControl: false }).setView([26, 40], 5);
@@ -73,11 +73,11 @@ function popup(a) {
 }
 
 function endpoint() {
-  if (mode === "mil") return `${API}/mil`;
+  if (mode === "mil") return API + "mil";
   const c = map.getCenter();
   const meters = c.distanceTo(map.getBounds().getNorthEast());
   const nm = Math.max(10, Math.min(250, Math.round(meters / 1852)));
-  return `${API}/point/${c.lat.toFixed(3)}/${c.lng.toFixed(3)}/${nm}`;
+  return API + encodeURIComponent(`point/${c.lat.toFixed(3)}/${c.lng.toFixed(3)}/${nm}`);
 }
 
 async function refresh() {
