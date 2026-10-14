@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>رادار الطيران</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <style>
   html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; background: #0b1220; color: #e6edf7; }
   #map { position: absolute; inset: 0; direction: ltr; }
@@ -29,7 +29,7 @@
   <span class="status" id="status">جاري التحميل…</span>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
 const API = "https://api.adsb.lol/v2";
 const REFRESH_MS = 10000;
@@ -82,4 +82,50 @@ function endpoint() {
 async function refresh() {
   try {
     const res = await fetch(endpoint());
-    if (!res.ok) throw new
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const list = (data.ac || []).filter(a => a.lat != null && a.lon != null);
+    const q = query.trim().toLowerCase();
+    const seen = new Set();
+
+    for (const a of list) {
+      if (q && !((a.flight || "").toLowerCase().includes(q) || (a.r || "").toLowerCase().includes(q) || a.hex.includes(q))) continue;
+      seen.add(a.hex);
+      let m = markers.get(a.hex);
+      if (!m) {
+        m = L.marker([a.lat, a.lon], { icon: icon(a) }).bindPopup(() => popup(m._a));
+        m.addTo(map);
+        markers.set(a.hex, m);
+      } else {
+        m.setLatLng([a.lat, a.lon]);
+        m.setIcon(icon(a));
+      }
+      m._a = a;
+    }
+    for (const [hex, m] of markers) {
+      if (!seen.has(hex)) { map.removeLayer(m); markers.delete(hex); }
+    }
+    statusEl.textContent = `${seen.size} طائرة · ${new Date().toLocaleTimeString("ar-EG")}`;
+  } catch (e) {
+    statusEl.textContent = "تعذر تحميل البيانات، سنحاول مجددًا…";
+  }
+}
+
+function setMode(m) {
+  mode = m;
+  document.getElementById("btnAll").classList.toggle("active", m === "all");
+  document.getElementById("btnMil").classList.toggle("active", m === "mil");
+  for (const mk of markers.values()) map.removeLayer(mk);
+  markers.clear();
+  refresh();
+}
+document.getElementById("btnAll").onclick = () => setMode("all");
+document.getElementById("btnMil").onclick = () => setMode("mil");
+document.getElementById("search").oninput = e => { query = e.target.value; refresh(); };
+map.on("moveend", () => { if (mode === "all") refresh(); });
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
